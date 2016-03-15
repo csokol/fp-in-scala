@@ -8,6 +8,54 @@ trait Option[+A] {
   def filter(pred: A => Boolean): Option[A]
 }
 
+object Option {
+  // exercise 4.3
+  def map2[A,B,C](a:Option[A], b:Option[B])(fn:(A,B) => C): Option[C] = {
+    a.flatMap { actualA =>
+      b.map { actualB =>
+        fn(actualA, actualB)
+      }
+    }
+  }
+
+  // exercise 4.3
+  def sequence[A](a: List[Option[A]]): Option[List[A]] = {
+    if (a.isEmpty) {
+      Some(List())
+    } else {
+      val head = a.head
+      head match {
+        case Some(elem) => {
+          sequence(a.tail).map(elem::_)
+        }
+        case None => None:Option[List[A]]
+      }
+    }
+  }
+
+  def sequenceFold[A](as: List[Option[A]]): Option[List[A]] = {
+    val initialValue:Option[List[A]] = Some(List())
+    as.foldRight(initialValue) { (a, acc) =>
+      a match {
+        case Some(elem) => acc.map(elem::_)
+        case None => None
+      }
+    }
+  }
+
+  def traverse[A,B](as: List[A])(fn: A => Option[B]): Option[List[B]] = {
+    val initialValue:Option[List[B]] = Some(List())
+    as.foldRight(initialValue) { (a, acc) =>
+      fn(a) match {
+        case Some(elem) => acc.map(elem::_)
+        case None => None
+      }
+    }
+  }
+
+
+}
+
 object None extends Option[Nothing] {
 
   override def map[B](f: (Nothing) => B): Option[B] = None
@@ -65,6 +113,30 @@ object Test {
     assert(variance(List(1,1,1,1,1,1)) == Some(0.0))
     assert(variance(List()) == None)
 
+    val a = Some(10)
+    val b = Some(20)
+    assert(Option.map2(a, b)(_ + _) == Some(30))
+    assert(Option.map2(None:Option[Int], b)(_ + _) == None)
+    assert(Option.map2(a, None:Option[Int])(_ + _) == None)
+
+    assert(Option.sequence(List(Some(10), Some(20))) == Some(List(10, 20)))
+    assert(Option.sequence(List(Some(10), Some(20), None)) == None)
+    assert(Option.sequence(List(None, Some(10), Some(20))) == None)
+    assert(Option.sequence(List(Some(10), None, Some(20))) == None)
+
+    assert(Option.sequenceFold(List(Some(10), Some(20))) == Some(List(10, 20)))
+    assert(Option.sequenceFold(List(Some(10), Some(20), None)) == None)
+    assert(Option.sequenceFold(List(None, Some(10), Some(20))) == None)
+    assert(Option.sequenceFold(List(Some(10), None, Some(20))) == None)
+
+    assert(Option.traverse(List("10", "2", "100"))(n => Try(n.toInt)) == Some(List(10, 2, 100)))
+    assert(Option.traverse(List("10", "abc", "100"))(n => Try(n.toInt)) == None)
+
+
+    def Try[A](fn: => A): Option[A] = {
+      try { Some(fn) }
+      catch { case e:Exception => None }
+    }
   }
 }
 
