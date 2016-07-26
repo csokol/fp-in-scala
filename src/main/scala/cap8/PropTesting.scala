@@ -4,17 +4,20 @@ import cap6.FunctionalState.{RNG, SimpleRNG, State}
 
 object PropTesting {
 
-  trait Prop {
-    def check: Boolean
-    def &&(p: Prop): Prop = {
-      this.check && p.check
-      ???
+  case class SGen[+A](forSize: Int => Gen[A]) {
+    def next(rng: RNG): (A, RNG) = {
+      val gen = forSize(0)
+      gen.sample(rng)
     }
   }
 
   case class Gen[A](sample: State[RNG,A]) {
     def next(rng: RNG): (A, RNG) = {
       sample(rng)
+    }
+
+    def unsized: SGen[A] = {
+      SGen(x => this)
     }
   }
 
@@ -51,6 +54,10 @@ object PropTesting {
     }
   }
 
+  def listOf[A](g: Gen[A]): SGen[List[A]] = {
+    SGen(n => listOfN(n, g))
+  }
+
   def union[A](g1: Gen[A], g2: Gen[A]): Gen[A] = {
     Gen[A] { rng =>
       val (b, rng1) = boolean.next(rng)
@@ -78,6 +85,75 @@ object PropTesting {
     }
   }
 
+  object Prop {
+    type FailedCase = String
+    type SuccessCount = Int
+    type TestCases = Int
+
+    sealed trait Result {
+      def isFalsified: Boolean
+    }
+
+    case class Prop(run: (TestCases,RNG) => Result) {
+      def &&(p: Prop): Prop = {
+        Prop {
+          (n, rng) => {
+            val run1 = this.run(n, rng)
+            if (run1.isFalsified) {
+              run1
+            } else {
+              p.run(n, rng)
+            }
+          }
+        }
+      }
+
+      def ||(p: Prop): Prop = {
+        Prop {
+          (n, rng) => {
+            val run1 = this.run(n, rng)
+            val run2 = p.run(n, rng)
+            if (!run1.isFalsified || !run2.isFalsified) {
+              if (!run1.isFalsified) run1 else run2
+            } else {
+              run1
+            }
+          }
+        }
+      }
+    }
+
+    case object Passed extends Result {
+      def isFalsified = false
+    }
+
+    case class Falsified(failure: FailedCase, successes: SuccessCount) extends Result {
+      def isFalsified = true
+    }
+
+    import cap5.Stream
+
+    def forAll[A](as: Gen[A])(f: A => Boolean): Prop = Prop {
+      (n, rng) => randomStream(as)(rng).zip(Stream.from(0)).take(n).map {
+        case (a, i) => try {
+          if (f(a)) Passed else Falsified(a.toString, i)
+        } catch {
+          case e: Exception => Falsified(buildMsg(a, e), i)
+        }
+      }.find(_.isFalsified).getOrElse(Passed)
+    }
+
+
+    def randomStream[A](g: Gen[A])(rng: RNG): Stream[A] = {
+      Stream.unfold(rng)(rng => Some(g.sample(rng)))
+    }
+    def buildMsg[A](s: A, e: Exception): String =
+      s"test case: $s\n" +
+        s"generated an exception: ${e.getMessage}\n" + s"stack trace:\n ${e.getStackTrace.mkString("\n")}"
+
+  }
+
+
 
   def main(args: Array[String]) {
     val gen1 = choose(15, 21)
@@ -94,13 +170,20 @@ object PropTesting {
     val one = unit(1)
 
     val alwaysOne = weighted((ten, 0), (one, 1))
-//    println(s"${alwaysOne.next(rng1)}, ${alwaysOne.next(rng2)}, ${alwaysOne.next(rng3)}")
+    println(s"${alwaysOne.next(rng1)}, ${alwaysOne.next(rng2)}, ${alwaysOne.next(rng3)}")
 
     val half = weighted((ten, 3), (one, 1))
 
     val distribution = listOfN(1000, half).next(rng1)._1.groupBy(identity)
         .map(tup => tup._1 -> tup._2.size)
     println(s"${distribution}")
+
+    val p1 = Prop.forAll(choose(1, 100))(_ <= 100)
+    val p2 = Prop.forAll(choose(1, 100))(_ <= 20)
+    val and = p1 && p2
+    val or = p1 || p2
+    println(and.run(100, rng1))
+    println(or.run(1000, rng1))
   }
 
 
